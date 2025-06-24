@@ -31,11 +31,16 @@ except KeyError as e:
 
 
 # ─── INIT EMBEDDINGS & LLM ─────────────────────────────────────────────────────
-embeddings = AzureOpen OpenAIEmbeddings(
+# Corrected: Removed extra 'Open' in AzureOpenAIEmbeddings
+embeddings = AzureOpenAIEmbeddings(
     azure_deployment=EMBEDDING_DEPLOYMENT,
     azure_endpoint=AZURE_API_BASE,
     api_key=AZURE_API_KEY,
     api_version=AZURE_API_VERSION,
+    # For text-embedding-3-large, default dimensions are 3072.
+    # If your Azure Search index has a specific vector dimension configured (e.g., 1536),
+    # you can uncomment and set it here to truncate the embeddings:
+    # dimensions=1536 # Example
 )
 
 llm = AzureChatOpenAI(
@@ -57,18 +62,20 @@ st.set_page_config(
 col1, col2 = st.columns([1, 8], gap="small")
 with col1:
     try:
+        # For Streamlit Cloud, ensure 'KPMG_logo.png' is in the same directory
+        # as app.py or provide a full path if it's elsewhere in the repo.
         logo = Image.open("KPMG_logo.png")
-        st.image(logo, width=80)
+        st.image(logo, width=80) # Adjusted width for better fit, original was 400
     except FileNotFoundError:
-        st.image("https://via.placeholder.com/80", width=80, caption="Logo")
+        st.image("https://via.placeholder.com/80", width=80, caption="Logo") # Fallback
 with col2:
     st.title("📄 KPMG RFP Query Assistant")
 
-# Initialize session-state defaults
+# Initialize session-state defaults for persistent data across Streamlit reruns
 for key in ("full_text", "chunks", "vector_store", "index_built", "pdf_bytes"):
     st.session_state.setdefault(key, None)
-st.session_state.setdefault("main_app_mode", "Runtime Analysis")
-st.session_state.setdefault("last_app_mode", None)
+st.session_state.setdefault("main_app_mode", "Runtime Analysis") # Default to Runtime Analysis
+st.session_state.setdefault("last_app_mode", None) # Track last mode for reset logic
 
 # ─── SIDEBAR: MAIN APP SELECTION ─────────────────────────────────────────────
 st.sidebar.title("App Selection")
@@ -79,6 +86,7 @@ current_main_app_mode = st.sidebar.radio(
     key="main_app_mode_selector"
 )
 
+# Check if app mode has changed, and reset relevant session states if so
 if st.session_state.last_app_mode != current_main_app_mode:
     st.session_state.full_text = None
     st.session_state.chunks = None
@@ -86,7 +94,7 @@ if st.session_state.last_app_mode != current_main_app_mode:
     st.session_state.index_built = False
     st.session_state.pdf_bytes = None
     st.session_state.last_app_mode = current_main_app_mode
-    st.rerun()
+    st.rerun() # Rerun to apply state changes immediately
 
 st.session_state.main_app_mode = current_main_app_mode
 
@@ -96,6 +104,7 @@ excel_file = st.sidebar.file_uploader(
     "Upload Bidder Queries (CSV/XLSX)", type=["csv", "xlsx"]
 )
 
+# Variables for controlling UI visibility later
 rfp_size_mode = None
 show_excerpts = False
 viz_option = "None"
@@ -103,6 +112,7 @@ current_vector_store_type = None
 
 
 if st.session_state.main_app_mode == "Historical Analysis":
+    # ─── HISTORICAL ANALYSIS MODE (Azure AI Search) ──────────────────────────
     st.sidebar.subheader("Historical Analysis Settings")
     st.sidebar.info(
         "This mode queries a pre-existing Azure AI Search index. "
@@ -110,22 +120,23 @@ if st.session_state.main_app_mode == "Historical Analysis":
     )
     current_vector_store_type = "Cloud Database (Azure AI Search)"
 
+    # Initialize Azure Search store for Historical Analysis
     if st.session_state.vector_store is None or not isinstance(st.session_state.vector_store, AzureSearch):
         try:
             st.session_state.vector_store = AzureSearch(
                 azure_search_endpoint=AZURE_SEARCH_SERVICE_ENDPOINT,
-                azure_search_key=AZURE_SEARCH_ADMIN_KEY,
+                azure_search_key=AZURE_SEARCH_ADMIN_KEY, # Admin key needed for index operations, or query key for just search
                 index_name=AZURE_SEARCH_INDEX_NAME,
                 embedding_function=embeddings.embed_query,
                 vector_key="contentVector" # Corrected vector field name based on image
             )
-            st.session_state.index_built = True
+            st.session_state.index_built = True # Assume index exists and is ready
             st.sidebar.success(f"Connected to cloud database '{AZURE_SEARCH_INDEX_NAME}'.")
         except Exception as e:
             st.sidebar.error(f"Failed to connect to Azure AI Search: {e}. Check Streamlit secrets and index availability.")
             st.session_state.index_built = False
     else:
-        st.session_state.index_built = True
+        st.session_state.index_built = True # If already connected from a previous run
 
     show_excerpts = st.sidebar.checkbox("🔍 Show Azure Search Excerpts", value=False, key="historical_show_excerpts")
     viz_option = st.sidebar.selectbox(
@@ -135,9 +146,11 @@ if st.session_state.main_app_mode == "Historical Analysis":
     )
 
 elif st.session_state.main_app_mode == "Runtime Analysis":
+    # ─── RUNTIME ANALYSIS MODE (FAISS) ───────────────────────────────────────
     st.sidebar.subheader("Runtime Analysis Settings")
     pdf_file_uploader = st.sidebar.file_uploader("Upload Tender PDF", type="pdf", key="runtime_pdf_uploader")
 
+    # Handle PDF upload and state management for Runtime Analysis
     if pdf_file_uploader is not None:
         st.session_state.pdf_bytes = pdf_file_uploader.read()
     else:
@@ -331,7 +344,7 @@ def answer_azure_search(q: str) -> str:
     """Answers a query using retrieved chunks from Azure AI Search vector store with semantic ranking (for Historical Analysis)."""
     docs = []
     try:
-        # Corrected: Using the specific semantic configuration name and vector_key
+        # Corrected: Using the specific semantic configuration name and vector_key is set in init
         docs = st.session_state.vector_store.similarity_search(
             q,
             k=3,
@@ -341,11 +354,11 @@ def answer_azure_search(q: str) -> str:
     except Exception as e:
         st.warning(f"Azure AI Search retrieval failed with Semantic Hybrid. Falling back to Hybrid search. Error: {e}")
         try:
-            # Fallback to Hybrid search, still specifying vector_key if it's consistently needed
+            # Fallback to Hybrid search, vector_key is already set during initialization
             docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="hybrid")
         except Exception as e_hybrid:
             st.warning(f"Hybrid search also failed. Falling back to basic similarity search. Error: {e_hybrid}")
-            # Fallback to basic similarity, still specifying vector_key
+            # Fallback to basic similarity, vector_key is already set
             docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="similarity")
     
     _display_excerpts(docs)
@@ -376,7 +389,13 @@ if excel_file:
     st.subheader("Loaded Bidder Queries")
     st.dataframe(df, use_container_width=True)
 
-    st.session_state.show_excerpts_current_mode = show_excerpts # This line is correct to use the locally set value
+    # Store current show_excerpts state in session for _display_excerpts helper
+    # This must be done after show_excerpts is set in the conditional blocks above
+    if st.session_state.main_app_mode == "Historical Analysis":
+        st.session_state.show_excerpts_current_mode = st.session_state.get('historical_show_excerpts', False)
+    else: # Runtime Analysis
+        st.session_state.show_excerpts_current_mode = st.session_state.get('faiss_show_excerpts', False)
+
 
     if st.button("Generate Responses"):
         answer_func = None
@@ -412,6 +431,8 @@ if excel_file:
             st.download_button("⬇️ Download Responses CSV", csv_out, "responses.csv", "text/csv")
 
             st.subheader("Response Analytics")
+            # Get the correct viz_option based on the active mode
+            # viz_option is set locally in the conditional blocks above (faiss_viz_option or historical_viz_option)
             current_viz_option = viz_option 
 
             if current_viz_option == "Bar chart of response lengths":
