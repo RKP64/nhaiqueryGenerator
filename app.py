@@ -112,15 +112,17 @@ if st.session_state.main_app_mode == "Historical Analysis":
 
     if st.session_state.vector_store is None or not isinstance(st.session_state.vector_store, AzureSearch):
         try:
-            # IMPORTANT: For AzureSearch initialization, only set vector_key and semantic_configuration_name once here.
-            # Do NOT pass them again in similarity_search if they are handled internally by LangChain's AzureSearch methods.
+            # Initialize Azure Search store for Historical Analysis
+            # Set vector_key here, and it should apply to all internal search types.
             st.session_state.vector_store = AzureSearch(
                 azure_search_endpoint=AZURE_SEARCH_SERVICE_ENDPOINT,
                 azure_search_key=AZURE_SEARCH_ADMIN_KEY,
                 index_name=AZURE_SEARCH_INDEX_NAME,
                 embedding_function=embeddings.embed_query,
-                vector_key="contentVector", # This is crucial for matching your index's vector field name
-                semantic_configuration_name="azureml-default" # This sets the default semantic config for the AzureSearch instance
+                vector_key="contentVector", # CRUCIAL: Your vector field name
+                # semantic_configuration_name is no longer strictly needed here if not using semantic_hybrid
+                # but leaving it set is harmless if you later re-enable semantic_hybrid
+                semantic_configuration_name="azureml-default" 
             )
             st.session_state.index_built = True
             st.sidebar.success(f"Connected to cloud database '{AZURE_SEARCH_INDEX_NAME}'.")
@@ -331,58 +333,70 @@ def answer_faiss(q: str) -> str:
 
 
 def answer_azure_search(q: str) -> str:
-    """Answers a query using retrieved chunks from Azure AI Search vector store with semantic ranking (for Historical Analysis)."""
+    """Answers a query using retrieved chunks from Azure AI Search, prioritizing Hybrid search."""
     docs = []
+    
+    # Define common kwargs that include the vector_key.
+    # The AzureSearch client itself should handle how these are passed internally.
+    # LangChain's internal search methods might still need the vector_key.
+    common_kwargs = {"vector_key": "contentVector"} # Ensure this is always part of the kwargs
+    
+    # Try semantic_hybrid first
     try:
-        # Pass semantic_configuration_name as a top-level kwarg to similarity_search.
-        # LangChain's internal methods should pick it up and pass it correctly to Azure Search SDK.
         docs = st.session_state.vector_store.similarity_search(
-            q,
+            query=q,
             k=3,
             search_type="semantic_hybrid",
-            # Explicitly pass semantic_configuration_name here. LangChain's semantic_hybrid_search
-            # should accept this and pass it to the underlying Azure SDK call without duplication
-            semantic_configuration_name="azureml-default"
+            # We explicitly pass semantic_configuration_name as a kwargs here too,
+            # to maximize chances of it being recognized by LangChain's internal semantic_hybrid_search
+            semantic_configuration_name="azureml-default", 
+            **common_kwargs # Pass vector_key
         )
     except Exception as e:
-        # Log the full error to Streamlit's console for debugging
-        st.exception(e)
-
+        st.exception(e) # Log the full error for debugging
         st.warning(f"Azure AI Search retrieval failed with Semantic Hybrid. Falling back to Hybrid search. Error: {e}")
+        
+        # Fallback to Hybrid search
         try:
-            # For fallback to Hybrid, ensure vector_key is used. semantic_configuration_name is not needed for hybrid.
-            # LangChain's hybrid_search still needs to know the vector field.
-            # The vector_key is already configured on the AzureSearch object instance.
             docs = st.session_state.vector_store.similarity_search(
-                q,
+                query=q,
                 k=3,
-                search_type="hybrid"
-                # Do NOT pass semantic_configuration_name here
+                search_type="hybrid",
+                **common_kwargs # Pass vector_key
             )
         except Exception as e_hybrid:
             st.exception(e_hybrid)
             st.warning(f"Hybrid search also failed. Falling back to basic similarity search. Error: {e_hybrid}")
-            # For fallback to basic similarity, vector_key is still needed.
-            # The vector_key is already configured on the AzureSearch object instance.
-            docs = st.session_state.vector_store.similarity_search(
-                q,
-                k=3,
-                search_type="similarity"
-                # Do NOT pass semantic_configuration_name here
-            )
+            
+            # Fallback to basic similarity (vector search only)
+            try:
+                docs = st.session_state.vector_store.similarity_search(
+                    query=q,
+                    k=3,
+                    search_type="similarity",
+                    **common_kwargs # Pass vector_key
+                )
+            except Exception as e_similarity:
+                st.exception(e_similarity)
+                st.error(f"Basic similarity search also failed. Cannot retrieve documents. Error: {e_similarity}")
+                return "Not specified in the RFP." # Return default message if all retrievals fail
     
     _display_excerpts(docs)
 
-    excerpt_text = "\n\n".join(d.page_content for d in docs)
-    prompt = (
-        "You are KPMG Tender Authority. Using *only* the provided RFP excerpts, "
-        "answer in ≤20 words, formal tone. If the information is not present in the excerpts, reply ‘Not specified in the RFP.’\n\n"
-        f"RFP Excerpts:\n{excerpt_text}\n\n"
-        f"Query: {q}\n"
-        f"Answer:"
-    )
-    ans = llm([HumanMessage(content=prompt)]).content.strip()
-    return f"{ans}{_format_references(docs)}"
+    # Proceed with LLM if documents were successfully retrieved
+    if docs:
+        excerpt_text = "\n\n".join(d.page_content for d in docs)
+        prompt = (
+            "You are KPMG Tender Authority. Using *only* the provided RFP excerpts, "
+            "answer in ≤20 words, formal tone. If the information is not present in the excerpts, reply ‘Not specified in the RFP.’\n\n"
+            f"RFP Excerpts:\n{excerpt_text}\n\n"
+            f"Query: {q}\n"
+            f"Answer:"
+        )
+        ans = llm([HumanMessage(content=prompt)]).content.strip()
+        return f"{ans}{_format_references(docs)}"
+    else:
+        return "Not specified in the RFP." # If no documents were retrieved at all
 
 
 # ─── QUERY UPLOAD & RESPONSES ─────────────────────────────────────────────────
