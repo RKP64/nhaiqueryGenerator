@@ -4,7 +4,7 @@ import pypdfium2 as pdfium
 import pandas as pd
 import matplotlib.pyplot as plt
 from PIL import Image
-import os # Keep os for FileNotFoundError for logo, but not for secrets
+import os 
 
 from langchain_core.documents import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -31,13 +31,11 @@ except KeyError as e:
 
 
 # ─── INIT EMBEDDINGS & LLM ─────────────────────────────────────────────────────
-embeddings = AzureOpenAIEmbeddings(
+embeddings = AzureOpen OpenAIEmbeddings(
     azure_deployment=EMBEDDING_DEPLOYMENT,
     azure_endpoint=AZURE_API_BASE,
     api_key=AZURE_API_KEY,
     api_version=AZURE_API_VERSION,
-    # If you truncated embedding dimensions for text-embedding-3-large, specify here:
-    # dimensions=1536 # Example
 )
 
 llm = AzureChatOpenAI(
@@ -59,19 +57,18 @@ st.set_page_config(
 col1, col2 = st.columns([1, 8], gap="small")
 with col1:
     try:
-        # Ensure 'KPMG_logo.png' is in the same directory as app.py
         logo = Image.open("KPMG_logo.png")
-        st.image(logo, width=80) # Adjusted width for better fit, original was 400
+        st.image(logo, width=80)
     except FileNotFoundError:
-        st.image("https://via.placeholder.com/80", width=80, caption="Logo") # Fallback
+        st.image("https://via.placeholder.com/80", width=80, caption="Logo")
 with col2:
     st.title("📄 KPMG RFP Query Assistant")
 
-# Initialize session-state defaults for persistent data across Streamlit reruns
+# Initialize session-state defaults
 for key in ("full_text", "chunks", "vector_store", "index_built", "pdf_bytes"):
     st.session_state.setdefault(key, None)
-st.session_state.setdefault("main_app_mode", "Runtime Analysis") # Default to Runtime Analysis
-st.session_state.setdefault("last_app_mode", None) # Track last mode for reset logic
+st.session_state.setdefault("main_app_mode", "Runtime Analysis")
+st.session_state.setdefault("last_app_mode", None)
 
 # ─── SIDEBAR: MAIN APP SELECTION ─────────────────────────────────────────────
 st.sidebar.title("App Selection")
@@ -82,7 +79,6 @@ current_main_app_mode = st.sidebar.radio(
     key="main_app_mode_selector"
 )
 
-# Check if app mode has changed, and reset relevant session states if so
 if st.session_state.last_app_mode != current_main_app_mode:
     st.session_state.full_text = None
     st.session_state.chunks = None
@@ -90,7 +86,7 @@ if st.session_state.last_app_mode != current_main_app_mode:
     st.session_state.index_built = False
     st.session_state.pdf_bytes = None
     st.session_state.last_app_mode = current_main_app_mode
-    st.rerun() # Rerun to apply state changes immediately
+    st.rerun()
 
 st.session_state.main_app_mode = current_main_app_mode
 
@@ -100,7 +96,6 @@ excel_file = st.sidebar.file_uploader(
     "Upload Bidder Queries (CSV/XLSX)", type=["csv", "xlsx"]
 )
 
-# Variables for controlling UI visibility later
 rfp_size_mode = None
 show_excerpts = False
 viz_option = "None"
@@ -108,30 +103,29 @@ current_vector_store_type = None
 
 
 if st.session_state.main_app_mode == "Historical Analysis":
-    # ─── HISTORICAL ANALYSIS MODE (Azure AI Search) ──────────────────────────
     st.sidebar.subheader("Historical Analysis Settings")
     st.sidebar.info(
-        "This mode queries a pre-existing Azure AI Search index."
-        " It assumes the index has been populated from a backend process."
+        "This mode queries a pre-existing Azure AI Search index. "
+        "It assumes the index has been populated from a backend process."
     )
     current_vector_store_type = "Cloud Database (Azure AI Search)"
 
-    # Initialize Azure Search store for Historical Analysis
     if st.session_state.vector_store is None or not isinstance(st.session_state.vector_store, AzureSearch):
         try:
             st.session_state.vector_store = AzureSearch(
                 azure_search_endpoint=AZURE_SEARCH_SERVICE_ENDPOINT,
-                azure_search_key=AZURE_SEARCH_ADMIN_KEY, # Admin key needed for index operations, or query key for just search
+                azure_search_key=AZURE_SEARCH_ADMIN_KEY,
                 index_name=AZURE_SEARCH_INDEX_NAME,
                 embedding_function=embeddings.embed_query,
+                vector_key="contentVector" # Corrected vector field name based on image
             )
-            st.session_state.index_built = True # Assume index exists and is ready
+            st.session_state.index_built = True
             st.sidebar.success(f"Connected to cloud database '{AZURE_SEARCH_INDEX_NAME}'.")
         except Exception as e:
-            st.sidebar.error(f"Failed to connect to Azure AI Search: {e}. Please check Streamlit secrets and index availability.")
+            st.sidebar.error(f"Failed to connect to Azure AI Search: {e}. Check Streamlit secrets and index availability.")
             st.session_state.index_built = False
     else:
-        st.session_state.index_built = True # If already connected from a previous run
+        st.session_state.index_built = True
 
     show_excerpts = st.sidebar.checkbox("🔍 Show Azure Search Excerpts", value=False, key="historical_show_excerpts")
     viz_option = st.sidebar.selectbox(
@@ -141,11 +135,9 @@ if st.session_state.main_app_mode == "Historical Analysis":
     )
 
 elif st.session_state.main_app_mode == "Runtime Analysis":
-    # ─── RUNTIME ANALYSIS MODE (FAISS) ───────────────────────────────────────
     st.sidebar.subheader("Runtime Analysis Settings")
     pdf_file_uploader = st.sidebar.file_uploader("Upload Tender PDF", type="pdf", key="runtime_pdf_uploader")
 
-    # Handle PDF upload and state management for Runtime Analysis
     if pdf_file_uploader is not None:
         st.session_state.pdf_bytes = pdf_file_uploader.read()
     else:
@@ -191,10 +183,10 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
                 pdf_document = pdfium.PdfDocument(st.session_state.pdf_bytes)
                 for i in range(len(pdf_document)):
                     page = pdf_document.get_page(i)
-                    text_page = page.get_textpage() # Corrected: Get PdfTextPage
+                    text_page = page.get_textpage()
                     text = text_page.get_text_range() or ""
-                    text_page.close() # Close PdfTextPage
-                    page.close() # Close PdfPage
+                    text_page.close()
+                    page.close()
                     
                     clause = None
                     for line in text.splitlines():
@@ -240,17 +232,16 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
         st.info("Please upload a tender PDF to begin Runtime Analysis.")
         st.stop()
     
-    # Load full text for "Small Size RFP" in Runtime Analysis mode if not already loaded
     if rfp_size_mode == "Small Size RFP" and st.session_state.full_text is None:
         try:
             reader = pdfium.PdfDocument(st.session_state.pdf_bytes)
             full_text_list = []
             for i in range(len(reader)):
                 page = reader.get_page(i)
-                text_page = page.get_textpage() # Corrected: Get PdfTextPage
+                text_page = page.get_textpage()
                 full_text_list.append(text_page.get_text_range() or "")
-                text_page.close() # Close PdfTextPage
-                page.close() # Close PdfPage
+                text_page.close()
+                page.close()
             reader.close()
             st.session_state.full_text = "".join(full_text_list)
             st.success(f"Loaded full PDF text ({len(st.session_state.full_text):,} chars).")
@@ -263,9 +254,8 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
             st.session_state.full_text = None
             st.stop()
 
-    # For "Large Size RFP" in Runtime Analysis mode, ensure the FAISS index is built
     if rfp_size_mode == "Large Size RFP" and not st.session_state.index_built:
-        st.info(f"In sidebar: choose chunk settings and click **Build {current_vector_store_type} Index**.") # Corrected button text based on mode
+        st.info(f"In sidebar: choose chunk settings and click **Build {current_vector_store_type} Index**.")
         st.stop()
 
 
@@ -286,10 +276,9 @@ def _format_references(docs):
 
 def _display_excerpts(docs):
     """Helper function to display retrieved document excerpts."""
-    # Retrieve show_excerpts from the session state key specific to the current app mode
     if st.session_state.main_app_mode == "Historical Analysis":
         current_show_excerpts = st.session_state.get('historical_show_excerpts', False)
-    else: # Runtime Analysis
+    else:
         current_show_excerpts = st.session_state.get('faiss_show_excerpts', False)
 
     if current_show_excerpts:
@@ -342,20 +331,21 @@ def answer_azure_search(q: str) -> str:
     """Answers a query using retrieved chunks from Azure AI Search vector store with semantic ranking (for Historical Analysis)."""
     docs = []
     try:
+        # Corrected: Using the specific semantic configuration name and vector_key
         docs = st.session_state.vector_store.similarity_search(
             q,
             k=3,
             search_type="semantic_hybrid",
-            # IMPORTANT: Using the specific semantic configuration name provided
-            semantic_configuration_name="azureml-default" 
+            semantic_configuration_name="azureml-default" # Set to the confirmed semantic config name
         )
     except Exception as e:
         st.warning(f"Azure AI Search retrieval failed with Semantic Hybrid. Falling back to Hybrid search. Error: {e}")
-        # Fallback logic if semantic_hybrid fails
         try:
+            # Fallback to Hybrid search, still specifying vector_key if it's consistently needed
             docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="hybrid")
         except Exception as e_hybrid:
             st.warning(f"Hybrid search also failed. Falling back to basic similarity search. Error: {e_hybrid}")
+            # Fallback to basic similarity, still specifying vector_key
             docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="similarity")
     
     _display_excerpts(docs)
@@ -386,13 +376,7 @@ if excel_file:
     st.subheader("Loaded Bidder Queries")
     st.dataframe(df, use_container_width=True)
 
-    # Trigger the 'show_excerpts_current_mode' state to update _display_excerpts helper
-    # This must be done after show_excerpts is set in the conditional blocks above
-    if st.session_state.main_app_mode == "Historical Analysis":
-        st.session_state.show_excerpts_current_mode = st.session_state.get('historical_show_excerpts', False)
-    else: # Runtime Analysis
-        st.session_state.show_excerpts_current_mode = st.session_state.get('faiss_show_excerpts', False)
-
+    st.session_state.show_excerpts_current_mode = show_excerpts # This line is correct to use the locally set value
 
     if st.button("Generate Responses"):
         answer_func = None
@@ -428,7 +412,6 @@ if excel_file:
             st.download_button("⬇️ Download Responses CSV", csv_out, "responses.csv", "text/csv")
 
             st.subheader("Response Analytics")
-            # Get the correct viz_option based on the active mode
             current_viz_option = viz_option 
 
             if current_viz_option == "Bar chart of response lengths":
