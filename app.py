@@ -66,7 +66,7 @@ with col1:
     try:
         # For Streamlit Cloud, ensure 'bial_logo.png' is in the same directory
         # as app.py or provide a full path if it's elsewhere in the repo.
-        logo = Image.open("bial_logo.png")
+        logo = Image.open("KPMG_logo.png")
         st.image(logo, width=80)
     except FileNotFoundError:
         st.image("https://via.placeholder.com/80", width=80, caption="Logo") # Fallback
