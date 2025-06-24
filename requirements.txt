@@ -12,3 +12,4 @@ pypdfium2
 matplotlib
 azure-identity
 faiss-cpu
+openpyxl
