@@ -112,13 +112,15 @@ if st.session_state.main_app_mode == "Historical Analysis":
 
     if st.session_state.vector_store is None or not isinstance(st.session_state.vector_store, AzureSearch):
         try:
+            # IMPORTANT: For AzureSearch initialization, only set vector_key and semantic_configuration_name once here.
+            # Do NOT pass them again in similarity_search if they are handled internally by LangChain's AzureSearch methods.
             st.session_state.vector_store = AzureSearch(
                 azure_search_endpoint=AZURE_SEARCH_SERVICE_ENDPOINT,
                 azure_search_key=AZURE_SEARCH_ADMIN_KEY,
                 index_name=AZURE_SEARCH_INDEX_NAME,
                 embedding_function=embeddings.embed_query,
                 vector_key="contentVector", # This is crucial for matching your index's vector field name
-                semantic_configuration_name="azureml-default" # This sets the default semantic config for the instance
+                semantic_configuration_name="azureml-default" # This sets the default semantic config for the AzureSearch instance
             )
             st.session_state.index_built = True
             st.sidebar.success(f"Connected to cloud database '{AZURE_SEARCH_INDEX_NAME}'.")
@@ -332,27 +334,42 @@ def answer_azure_search(q: str) -> str:
     """Answers a query using retrieved chunks from Azure AI Search vector store with semantic ranking (for Historical Analysis)."""
     docs = []
     try:
-        # Corrected: Removed redundant semantic_configuration_name from similarity_search call.
-        # It's already set during AzureSearch initialization for this instance.
-        # The vector_key is also set during AzureSearch initialization.
+        # Pass semantic_configuration_name as a top-level kwarg to similarity_search.
+        # LangChain's internal methods should pick it up and pass it correctly to Azure Search SDK.
         docs = st.session_state.vector_store.similarity_search(
             q,
             k=3,
-            search_type="semantic_hybrid"
+            search_type="semantic_hybrid",
+            # Explicitly pass semantic_configuration_name here. LangChain's semantic_hybrid_search
+            # should accept this and pass it to the underlying Azure SDK call without duplication
+            semantic_configuration_name="azureml-default"
         )
     except Exception as e:
         # Log the full error to Streamlit's console for debugging
-        st.exception(e) # This will show the full traceback in the Streamlit console
+        st.exception(e)
 
         st.warning(f"Azure AI Search retrieval failed with Semantic Hybrid. Falling back to Hybrid search. Error: {e}")
         try:
-            # Fallback to Hybrid search. vector_key is set in initialization.
-            docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="hybrid")
+            # For fallback to Hybrid, ensure vector_key is used. semantic_configuration_name is not needed for hybrid.
+            # LangChain's hybrid_search still needs to know the vector field.
+            # The vector_key is already configured on the AzureSearch object instance.
+            docs = st.session_state.vector_store.similarity_search(
+                q,
+                k=3,
+                search_type="hybrid"
+                # Do NOT pass semantic_configuration_name here
+            )
         except Exception as e_hybrid:
-            st.exception(e_hybrid) # Log fallback error
+            st.exception(e_hybrid)
             st.warning(f"Hybrid search also failed. Falling back to basic similarity search. Error: {e_hybrid}")
-            # Fallback to basic similarity. vector_key is set in initialization.
-            docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="similarity")
+            # For fallback to basic similarity, vector_key is still needed.
+            # The vector_key is already configured on the AzureSearch object instance.
+            docs = st.session_state.vector_store.similarity_search(
+                q,
+                k=3,
+                search_type="similarity"
+                # Do NOT pass semantic_configuration_name here
+            )
     
     _display_excerpts(docs)
 
@@ -382,11 +399,9 @@ if excel_file:
     st.subheader("Loaded Bidder Queries")
     st.dataframe(df, use_container_width=True)
 
-    # Store current show_excerpts state in session for _display_excerpts helper
-    # This must be done after show_excerpts is set in the conditional blocks above
     if st.session_state.main_app_mode == "Historical Analysis":
         st.session_state.show_excerpts_current_mode = st.session_state.get('historical_show_excerpts', False)
-    else: # Runtime Analysis
+    else:
         st.session_state.show_excerpts_current_mode = st.session_state.get('faiss_show_excerpts', False)
 
 
@@ -424,8 +439,6 @@ if excel_file:
             st.download_button("⬇️ Download Responses CSV", csv_out, "responses.csv", "text/csv")
 
             st.subheader("Response Analytics")
-            # Get the correct viz_option based on the active mode
-            # viz_option is set locally in the conditional blocks above (faiss_viz_option or historical_viz_option)
             current_viz_option = viz_option 
 
             if current_viz_option == "Bar chart of response lengths":
