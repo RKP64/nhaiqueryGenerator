@@ -13,13 +13,6 @@ from langchain_community.vectorstores import FAISS, AzureSearch
 from langchain_core.messages import HumanMessage
 
 # ─── AZURE CONFIG: Read from st.secrets for Streamlit Cloud deployment ────────
-# IMPORTANT: These keys must be set in your Streamlit Cloud app's Secrets!
-# Example of how to structure your secrets:
-# AZURE_API_TYPE="azure"
-# AZURE_API_BASE="https://your-openai-resource.openai.azure.com/"
-# AZURE_API_KEY="YOUR_API_KEY"
-# ... and so on for all variables below
-
 try:
     AZURE_API_TYPE = st.secrets["AZURE_API_TYPE"]
     AZURE_API_BASE = st.secrets["AZURE_API_BASE"]
@@ -33,8 +26,8 @@ try:
     AZURE_SEARCH_ADMIN_KEY = st.secrets["AZURE_SEARCH_ADMIN_KEY"]
     AZURE_SEARCH_INDEX_NAME = st.secrets["AZURE_SEARCH_INDEX_NAME"]
 except KeyError as e:
-    st.error(f"Missing Streamlit secret: {e}. Please ensure all Azure credentials are set in your Streamlit Cloud app's secrets.")
-    st.stop() # Stop the app if secrets are missing
+    st.error(f"Configuration Error: Missing Streamlit secret: '{e}'. Please ensure all Azure credentials are set in your Streamlit Cloud app's secrets.")
+    st.stop()
 
 
 # ─── INIT EMBEDDINGS & LLM ─────────────────────────────────────────────────────
@@ -43,6 +36,8 @@ embeddings = AzureOpenAIEmbeddings(
     azure_endpoint=AZURE_API_BASE,
     api_key=AZURE_API_KEY,
     api_version=AZURE_API_VERSION,
+    # If you truncated embedding dimensions for text-embedding-3-large, specify here:
+    # dimensions=1536 # Example
 )
 
 llm = AzureChatOpenAI(
@@ -57,21 +52,20 @@ llm = AzureChatOpenAI(
 
 # ─── STREAMLIT SETUP ──────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="NHAI RFP Query Builder", page_icon="KPMG_logo.png", layout="wide"
+    page_title="KPMG RFP Query Assistant", page_icon="KPMG_logo.png", layout="wide"
 )
 
-# Header with BIAL logo
+# Header with KPMG logo
 col1, col2 = st.columns([1, 8], gap="small")
 with col1:
     try:
-        # For Streamlit Cloud, ensure 'bial_logo.png' is in the same directory
-        # as app.py or provide a full path if it's elsewhere in the repo.
+        # Ensure 'KPMG_logo.png' is in the same directory as app.py
         logo = Image.open("KPMG_logo.png")
-        st.image(logo, width=400)
+        st.image(logo, width=80) # Adjusted width for better fit, original was 400
     except FileNotFoundError:
         st.image("https://via.placeholder.com/80", width=80, caption="Logo") # Fallback
 with col2:
-    st.title("📄 KPMG RFP Query Assitant")
+    st.title("📄 KPMG RFP Query Assistant")
 
 # Initialize session-state defaults for persistent data across Streamlit reruns
 for key in ("full_text", "chunks", "vector_store", "index_built", "pdf_bytes"):
@@ -117,31 +111,33 @@ if st.session_state.main_app_mode == "Historical Analysis":
     # ─── HISTORICAL ANALYSIS MODE (Azure AI Search) ──────────────────────────
     st.sidebar.subheader("Historical Analysis Settings")
     st.sidebar.info(
-        ""
-        ""
+        "This mode queries a pre-existing Azure AI Search index."
+        " It assumes the index has been populated from a backend process."
     )
-    current_vector_store_type = "oncloud database"
+    current_vector_store_type = "Cloud Database (Azure AI Search)"
 
+    # Initialize Azure Search store for Historical Analysis
     if st.session_state.vector_store is None or not isinstance(st.session_state.vector_store, AzureSearch):
         try:
             st.session_state.vector_store = AzureSearch(
                 azure_search_endpoint=AZURE_SEARCH_SERVICE_ENDPOINT,
-                azure_search_key=AZURE_SEARCH_ADMIN_KEY,
+                azure_search_key=AZURE_SEARCH_ADMIN_KEY, # Admin key needed for index operations, or query key for just search
                 index_name=AZURE_SEARCH_INDEX_NAME,
                 embedding_function=embeddings.embed_query,
             )
-            st.session_state.index_built = True
-            st.sidebar.success(f"Connected to cloud '{AZURE_SEARCH_INDEX_NAME}'.")
+            st.session_state.index_built = True # Assume index exists and is ready
+            st.sidebar.success(f"Connected to cloud database '{AZURE_SEARCH_INDEX_NAME}'.")
         except Exception as e:
-            st.sidebar.error(f"Failed to connect to Azure AI Search: {e}. Check Streamlit secrets and index availability.")
+            st.sidebar.error(f"Failed to connect to Azure AI Search: {e}. Please check Streamlit secrets and index availability.")
             st.session_state.index_built = False
     else:
-        st.session_state.index_built = True
+        st.session_state.index_built = True # If already connected from a previous run
 
-    show_excerpts = st.sidebar.checkbox("🔍 Show Azure Search Excerpts", value=False)
+    show_excerpts = st.sidebar.checkbox("🔍 Show Azure Search Excerpts", value=False, key="historical_show_excerpts")
     viz_option = st.sidebar.selectbox(
         "Visualization",
         ["None", "Bar chart of response lengths", "Pie chart of answer coverage"],
+        key="historical_viz_option"
     )
 
 elif st.session_state.main_app_mode == "Runtime Analysis":
@@ -149,6 +145,7 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
     st.sidebar.subheader("Runtime Analysis Settings")
     pdf_file_uploader = st.sidebar.file_uploader("Upload Tender PDF", type="pdf", key="runtime_pdf_uploader")
 
+    # Handle PDF upload and state management for Runtime Analysis
     if pdf_file_uploader is not None:
         st.session_state.pdf_bytes = pdf_file_uploader.read()
     else:
@@ -178,7 +175,7 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
     else:
         rfp_size_mode = None
 
-    current_vector_store_type = "local database"
+    current_vector_store_type = "Local Database (FAISS)"
 
     if st.session_state.pdf_bytes and rfp_size_mode == "Large Size RFP":
         st.sidebar.markdown(f"Using **{current_vector_store_type}** for indexing.")
@@ -194,10 +191,10 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
                 pdf_document = pdfium.PdfDocument(st.session_state.pdf_bytes)
                 for i in range(len(pdf_document)):
                     page = pdf_document.get_page(i)
-                    text_page = page.get_textpage() # Get PdfTextPage
+                    text_page = page.get_textpage() # Corrected: Get PdfTextPage
                     text = text_page.get_text_range() or ""
-                    text_page.close()
-                    page.close()
+                    text_page.close() # Close PdfTextPage
+                    page.close() # Close PdfPage
                     
                     clause = None
                     for line in text.splitlines():
@@ -219,14 +216,14 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
                 st.session_state.index_built = True
                 st.sidebar.success(f"Built FAISS index over {len(chunks)} chunks.")
 
-        show_excerpts = st.sidebar.checkbox("🔍 Show  Excerpts", value=False)
+        show_excerpts = st.sidebar.checkbox("🔍 Show FAISS Excerpts", value=False, key="faiss_show_excerpts")
         viz_option = st.sidebar.selectbox(
             "Visualization",
             ["None", "Bar chart of response lengths", "Pie chart of answer coverage"],
             key="faiss_viz_option"
         )
     else:
-        st.info("Upload a PDF to begin Runtime Analysis.")
+        st.info("Upload a PDF to begin Runtime Analysis. Large PDFs will use FAISS for indexing.")
         show_excerpts = False
         viz_option = "None"
 
@@ -234,25 +231,26 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
 # ─── MAIN PANEL: INITIAL CHECKS ───────────────────────────────────────────────
 if st.session_state.main_app_mode == "Historical Analysis":
     if not st.session_state.index_built:
-        st.info("Attempting to connect to cloud database.")
+        st.info("Attempting to connect to cloud database (Azure AI Search). Please ensure credentials are set correctly and the index is available.")
         st.stop()
-    st.success("Ready for Historical Analysis.")
+    st.success("Ready for Historical Analysis queries using Azure AI Search.")
 
 elif st.session_state.main_app_mode == "Runtime Analysis":
     if not st.session_state.pdf_bytes:
         st.info("Please upload a tender PDF to begin Runtime Analysis.")
         st.stop()
     
+    # Load full text for "Small Size RFP" in Runtime Analysis mode if not already loaded
     if rfp_size_mode == "Small Size RFP" and st.session_state.full_text is None:
         try:
             reader = pdfium.PdfDocument(st.session_state.pdf_bytes)
             full_text_list = []
             for i in range(len(reader)):
                 page = reader.get_page(i)
-                text_page = page.get_textpage()
+                text_page = page.get_textpage() # Corrected: Get PdfTextPage
                 full_text_list.append(text_page.get_text_range() or "")
-                text_page.close()
-                page.close()
+                text_page.close() # Close PdfTextPage
+                page.close() # Close PdfPage
             reader.close()
             st.session_state.full_text = "".join(full_text_list)
             st.success(f"Loaded full PDF text ({len(st.session_state.full_text):,} chars).")
@@ -265,8 +263,9 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
             st.session_state.full_text = None
             st.stop()
 
+    # For "Large Size RFP" in Runtime Analysis mode, ensure the FAISS index is built
     if rfp_size_mode == "Large Size RFP" and not st.session_state.index_built:
-        st.info(f"In sidebar: choose chunk settings.")
+        st.info(f"In sidebar: choose chunk settings and click **Build {current_vector_store_type} Index**.") # Corrected button text based on mode
         st.stop()
 
 
@@ -287,9 +286,13 @@ def _format_references(docs):
 
 def _display_excerpts(docs):
     """Helper function to display retrieved document excerpts."""
-    # show_excerpts is a local variable, not directly in session state for dynamic access
-    # It's set in the active app mode block.
-    if st.session_state.get('show_excerpts_current_mode', False): # Use a distinct session state key for clarity
+    # Retrieve show_excerpts from the session state key specific to the current app mode
+    if st.session_state.main_app_mode == "Historical Analysis":
+        current_show_excerpts = st.session_state.get('historical_show_excerpts', False)
+    else: # Runtime Analysis
+        current_show_excerpts = st.session_state.get('faiss_show_excerpts', False)
+
+    if current_show_excerpts:
         st.subheader("Relevant Excerpts from RFP:")
         if not docs:
             st.info("No relevant excerpts found for this query.")
@@ -307,9 +310,9 @@ def _display_excerpts(docs):
 
 
 def answer_direct(q: str) -> str:
-    """Answers a query using the full PDF text (for Small Size RFP)."""
+    """Answers a query using the full PDF text (for Small Size RFP in Runtime Analysis)."""
     prompt = (
-        "You are NHAI Tender Authority. Using *only* the provided RFP document, "
+        "You are KPMG Tender Authority. Using *only* the provided RFP document, "
         "answer in ≤20 words, formal tone. If not specified, reply ‘Not specified in the RFP.’\n\n"
         f"RFP Document:\n{st.session_state.full_text}\n\n"
         f"Query: {q}\n"
@@ -319,13 +322,13 @@ def answer_direct(q: str) -> str:
 
 
 def answer_faiss(q: str) -> str:
-    """Answers a query using retrieved chunks from FAISS vector store."""
+    """Answers a query using retrieved chunks from FAISS vector store (for Runtime Analysis)."""
     docs = st.session_state.vector_store.similarity_search(q, k=3)
     _display_excerpts(docs)
 
     excerpt_text = "\n\n".join(d.page_content for d in docs)
     prompt = (
-        "You are NHAI Tender Authority. Using *only* the provided RFP excerpts, "
+        "You are KPMG Tender Authority. Using *only* the provided RFP excerpts, "
         "answer in ≤20 words, formal tone. If the information is not present in the excerpts, reply ‘Not specified in the RFP.’\n\n"
         f"RFP Excerpts:\n{excerpt_text}\n\n"
         f"Query: {q}\n"
@@ -336,27 +339,30 @@ def answer_faiss(q: str) -> str:
 
 
 def answer_azure_search(q: str) -> str:
-    """Answers a query using retrieved chunks from Azure AI Search vector store with semantic ranking."""
+    """Answers a query using retrieved chunks from Azure AI Search vector store with semantic ranking (for Historical Analysis)."""
     docs = []
     try:
         docs = st.session_state.vector_store.similarity_search(
             q,
             k=3,
             search_type="semantic_hybrid",
-            semantic_configuration_name="default"
+            # IMPORTANT: Using the specific semantic configuration name provided
+            semantic_configuration_name="azureml-default" 
         )
     except Exception as e:
         st.warning(f"Azure AI Search retrieval failed with Semantic Hybrid. Falling back to Hybrid search. Error: {e}")
-        docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="hybrid")
-        if not docs:
-            st.warning("Hybrid search also failed. Falling back to basic similarity search.")
+        # Fallback logic if semantic_hybrid fails
+        try:
+            docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="hybrid")
+        except Exception as e_hybrid:
+            st.warning(f"Hybrid search also failed. Falling back to basic similarity search. Error: {e_hybrid}")
             docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="similarity")
     
     _display_excerpts(docs)
 
     excerpt_text = "\n\n".join(d.page_content for d in docs)
     prompt = (
-        "You are NHAI Tender Authority. Using *only* the provided RFP excerpts, "
+        "You are KPMG Tender Authority. Using *only* the provided RFP excerpts, "
         "answer in ≤20 words, formal tone. If the information is not present in the excerpts, reply ‘Not specified in the RFP.’\n\n"
         f"RFP Excerpts:\n{excerpt_text}\n\n"
         f"Query: {q}\n"
@@ -380,8 +386,13 @@ if excel_file:
     st.subheader("Loaded Bidder Queries")
     st.dataframe(df, use_container_width=True)
 
-    # Store current show_excerpts state in session for _display_excerpts helper
-    st.session_state.show_excerpts_current_mode = show_excerpts 
+    # Trigger the 'show_excerpts_current_mode' state to update _display_excerpts helper
+    # This must be done after show_excerpts is set in the conditional blocks above
+    if st.session_state.main_app_mode == "Historical Analysis":
+        st.session_state.show_excerpts_current_mode = st.session_state.get('historical_show_excerpts', False)
+    else: # Runtime Analysis
+        st.session_state.show_excerpts_current_mode = st.session_state.get('faiss_show_excerpts', False)
+
 
     if st.button("Generate Responses"):
         answer_func = None
@@ -417,7 +428,7 @@ if excel_file:
             st.download_button("⬇️ Download Responses CSV", csv_out, "responses.csv", "text/csv")
 
             st.subheader("Response Analytics")
-            # Viz option is directly from the selected mode's variable
+            # Get the correct viz_option based on the active mode
             current_viz_option = viz_option 
 
             if current_viz_option == "Bar chart of response lengths":
@@ -449,7 +460,7 @@ if excel_file:
                     ax.axis('equal')
                     ax.set_title("Proportion of Answered vs. Unanswered Queries")
                     st.pyplot(fig)
-        else: # Should ideally be caught by previous st.stop()
+        else:
             st.error("An internal error occurred: No answering function determined.")
 else:
     st.info("Please upload your CSV/XLSX of queries to generate responses.")
