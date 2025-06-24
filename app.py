@@ -67,7 +67,7 @@ with col1:
         # For Streamlit Cloud, ensure 'bial_logo.png' is in the same directory
         # as app.py or provide a full path if it's elsewhere in the repo.
         logo = Image.open("KPMG_logo.png")
-        st.image(logo, width=80)
+        st.image(logo, width=400)
     except FileNotFoundError:
         st.image("https://via.placeholder.com/80", width=80, caption="Logo") # Fallback
 with col2:
@@ -131,7 +131,7 @@ if st.session_state.main_app_mode == "Historical Analysis":
                 embedding_function=embeddings.embed_query,
             )
             st.session_state.index_built = True
-            st.sidebar.success(f"Connected to Azure AI Search index '{AZURE_SEARCH_INDEX_NAME}'.")
+            st.sidebar.success(f"Connected to cloud '{AZURE_SEARCH_INDEX_NAME}'.")
         except Exception as e:
             st.sidebar.error(f"Failed to connect to Azure AI Search: {e}. Check Streamlit secrets and index availability.")
             st.session_state.index_built = False
