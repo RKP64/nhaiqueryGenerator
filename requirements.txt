@@ -1,0 +1,14 @@
+streamlit
+openai
+pandas
+azure-search-documents
+azure-core
+langchain-openai
+langchain-experimental
+tabulate
+python-dotenv
+langchain
+pypdfium2
+matplotlib
+azure-identity
+faiss-cpu
