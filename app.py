@@ -126,7 +126,9 @@ if st.session_state.main_app_mode == "Historical Analysis":
                 azure_search_key=AZURE_SEARCH_ADMIN_KEY, # Admin key needed for index operations, or query key for just search
                 index_name=AZURE_SEARCH_INDEX_NAME,
                 embedding_function=embeddings.embed_query,
-                vector_key="contentVector" # Corrected vector field name based on image and previous error
+                vector_key="contentVector", # Corrected vector field name based on image and previous error
+                # Set semantic_configuration_name during initialization if it's always used for this index
+                semantic_configuration_name="azureml-default" # Set here, not in similarity_search call
             )
             st.session_state.index_built = True # Assume index exists and is ready
             st.sidebar.success(f"Connected to cloud database '{AZURE_SEARCH_INDEX_NAME}'.")
@@ -342,12 +344,13 @@ def answer_azure_search(q: str) -> str:
     """Answers a query using retrieved chunks from Azure AI Search vector store with semantic ranking (for Historical Analysis)."""
     docs = []
     try:
-        # Corrected: Using the specific semantic configuration name and vector_key is set in init
+        # Corrected: Removed redundant semantic_configuration_name from similarity_search call.
+        # It's already set during AzureSearch initialization for this instance.
         docs = st.session_state.vector_store.similarity_search(
             q,
             k=3,
-            search_type="semantic_hybrid",
-            semantic_configuration_name="azureml-default" # Set to the confirmed semantic config name
+            search_type="semantic_hybrid"
+            # semantic_configuration_name="azureml-default" # REMOVED: This was causing the "multiple values" error
         )
     except Exception as e:
         # Log the full error to Streamlit's console for debugging
@@ -355,12 +358,12 @@ def answer_azure_search(q: str) -> str:
 
         st.warning(f"Azure AI Search retrieval failed with Semantic Hybrid. Falling back to Hybrid search. Error: {e}")
         try:
-            # Fallback to Hybrid search, vector_key is already set during initialization
+            # Fallback to Hybrid search. vector_key is set in initialization.
             docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="hybrid")
         except Exception as e_hybrid:
             st.exception(e_hybrid) # Log fallback error
             st.warning(f"Hybrid search also failed. Falling back to basic similarity search. Error: {e_hybrid}")
-            # Fallback to basic similarity, vector_key is already set
+            # Fallback to basic similarity. vector_key is set in initialization.
             docs = st.session_state.vector_store.similarity_search(q, k=3, search_type="similarity")
     
     _display_excerpts(docs)
