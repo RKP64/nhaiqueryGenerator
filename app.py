@@ -57,7 +57,7 @@ llm = AzureChatOpenAI(
 
 # ─── STREAMLIT SETUP ──────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="BIAL RFP Query Builder", page_icon="bial_logo.png", layout="wide"
+    page_title="NHAI RFP Query Builder", page_icon="KPMG_logo.png", layout="wide"
 )
 
 # Header with BIAL logo
@@ -71,7 +71,7 @@ with col1:
     except FileNotFoundError:
         st.image("https://via.placeholder.com/80", width=80, caption="Logo") # Fallback
 with col2:
-    st.title("📄 RFP Query Builder")
+    st.title("📄 KPMG RFP Query Assitant")
 
 # Initialize session-state defaults for persistent data across Streamlit reruns
 for key in ("full_text", "chunks", "vector_store", "index_built", "pdf_bytes"):
@@ -117,10 +117,10 @@ if st.session_state.main_app_mode == "Historical Analysis":
     # ─── HISTORICAL ANALYSIS MODE (Azure AI Search) ──────────────────────────
     st.sidebar.subheader("Historical Analysis Settings")
     st.sidebar.info(
-        "This mode queries a pre-existing Azure AI Search index. "
-        "Document ingestion is handled externally."
+        ""
+        ""
     )
-    current_vector_store_type = "Azure AI Search (Cloud)"
+    current_vector_store_type = "oncloud database"
 
     if st.session_state.vector_store is None or not isinstance(st.session_state.vector_store, AzureSearch):
         try:
@@ -178,7 +178,7 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
     else:
         rfp_size_mode = None
 
-    current_vector_store_type = "FAISS (Local)"
+    current_vector_store_type = "local database"
 
     if st.session_state.pdf_bytes and rfp_size_mode == "Large Size RFP":
         st.sidebar.markdown(f"Using **{current_vector_store_type}** for indexing.")
@@ -219,14 +219,14 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
                 st.session_state.index_built = True
                 st.sidebar.success(f"Built FAISS index over {len(chunks)} chunks.")
 
-        show_excerpts = st.sidebar.checkbox("🔍 Show FAISS Excerpts", value=False)
+        show_excerpts = st.sidebar.checkbox("🔍 Show  Excerpts", value=False)
         viz_option = st.sidebar.selectbox(
             "Visualization",
             ["None", "Bar chart of response lengths", "Pie chart of answer coverage"],
             key="faiss_viz_option"
         )
     else:
-        st.info("Upload a PDF to begin Runtime Analysis. Large PDFs will use FAISS for indexing.")
+        st.info("Upload a PDF to begin Runtime Analysis.")
         show_excerpts = False
         viz_option = "None"
 
@@ -234,9 +234,9 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
 # ─── MAIN PANEL: INITIAL CHECKS ───────────────────────────────────────────────
 if st.session_state.main_app_mode == "Historical Analysis":
     if not st.session_state.index_built:
-        st.info("Attempting to connect to Azure AI Search. Please ensure credentials are set correctly and the index is available.")
+        st.info("Attempting to connect to cloud database.")
         st.stop()
-    st.success("Ready for Historical Analysis queries using Azure AI Search.")
+    st.success("Ready for Historical Analysis.")
 
 elif st.session_state.main_app_mode == "Runtime Analysis":
     if not st.session_state.pdf_bytes:
@@ -266,7 +266,7 @@ elif st.session_state.main_app_mode == "Runtime Analysis":
             st.stop()
 
     if rfp_size_mode == "Large Size RFP" and not st.session_state.index_built:
-        st.info(f"In sidebar: choose chunk settings and click **Build FAISS (Local) Index**.")
+        st.info(f"In sidebar: choose chunk settings.")
         st.stop()
 
 
@@ -309,7 +309,7 @@ def _display_excerpts(docs):
 def answer_direct(q: str) -> str:
     """Answers a query using the full PDF text (for Small Size RFP)."""
     prompt = (
-        "You are BIAL Tender Authority. Using *only* the provided RFP document, "
+        "You are NHAI Tender Authority. Using *only* the provided RFP document, "
         "answer in ≤20 words, formal tone. If not specified, reply ‘Not specified in the RFP.’\n\n"
         f"RFP Document:\n{st.session_state.full_text}\n\n"
         f"Query: {q}\n"
@@ -325,7 +325,7 @@ def answer_faiss(q: str) -> str:
 
     excerpt_text = "\n\n".join(d.page_content for d in docs)
     prompt = (
-        "You are BIAL Tender Authority. Using *only* the provided RFP excerpts, "
+        "You are NHAI Tender Authority. Using *only* the provided RFP excerpts, "
         "answer in ≤20 words, formal tone. If the information is not present in the excerpts, reply ‘Not specified in the RFP.’\n\n"
         f"RFP Excerpts:\n{excerpt_text}\n\n"
         f"Query: {q}\n"
@@ -356,7 +356,7 @@ def answer_azure_search(q: str) -> str:
 
     excerpt_text = "\n\n".join(d.page_content for d in docs)
     prompt = (
-        "You are BIAL Tender Authority. Using *only* the provided RFP excerpts, "
+        "You are NHAI Tender Authority. Using *only* the provided RFP excerpts, "
         "answer in ≤20 words, formal tone. If the information is not present in the excerpts, reply ‘Not specified in the RFP.’\n\n"
         f"RFP Excerpts:\n{excerpt_text}\n\n"
         f"Query: {q}\n"
@@ -387,7 +387,7 @@ if excel_file:
         answer_func = None
         if st.session_state.main_app_mode == "Historical Analysis":
             if not st.session_state.index_built:
-                st.error("Azure AI Search is not connected. Please check sidebar for connection status.")
+                st.error("Cloud database is not connected. Please check sidebar for connection status.")
                 st.stop()
             answer_func = answer_azure_search
         elif st.session_state.main_app_mode == "Runtime Analysis":
