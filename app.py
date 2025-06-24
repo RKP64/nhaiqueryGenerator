@@ -36,10 +36,6 @@ embeddings = AzureOpenAIEmbeddings(
     azure_endpoint=AZURE_API_BASE,
     api_key=AZURE_API_KEY,
     api_version=AZURE_API_VERSION,
-    # For text-embedding-3-large, default dimensions are 3072.
-    # If your Azure Search index has a specific vector dimension configured (e.g., 1536),
-    # you can uncomment and set it here to truncate the embeddings:
-    # dimensions=1536 # Example
 )
 
 llm = AzureChatOpenAI(
@@ -61,19 +57,18 @@ st.set_page_config(
 col1, col2 = st.columns([1, 8], gap="small")
 with col1:
     try:
-        # Ensure 'KPMG_logo.png' is in the same directory as app.py
         logo = Image.open("KPMG_logo.png")
-        st.image(logo, width=80) # Adjusted width for better fit, original was 400
+        st.image(logo, width=80)
     except FileNotFoundError:
-        st.image("https://via.placeholder.com/80", width=80, caption="Logo") # Fallback
+        st.image("https://via.placeholder.com/80", width=80, caption="Logo")
 with col2:
     st.title("📄 KPMG RFP Query Assistant")
 
-# Initialize session-state defaults for persistent data across Streamlit reruns
+# Initialize session-state defaults
 for key in ("full_text", "chunks", "vector_store", "index_built", "pdf_bytes"):
     st.session_state.setdefault(key, None)
-st.session_state.setdefault("main_app_mode", "Runtime Analysis") # Default to Runtime Analysis
-st.session_state.setdefault("last_app_mode", None) # Track last mode for reset logic
+st.session_state.setdefault("main_app_mode", "Runtime Analysis")
+st.session_state.setdefault("last_app_mode", None)
 
 # ─── SIDEBAR: MAIN APP SELECTION ─────────────────────────────────────────────
 st.sidebar.title("App Selection")
@@ -84,7 +79,6 @@ current_main_app_mode = st.sidebar.radio(
     key="main_app_mode_selector"
 )
 
-# Check if app mode has changed, and reset relevant session states if so
 if st.session_state.last_app_mode != current_main_app_mode:
     st.session_state.full_text = None
     st.session_state.chunks = None
@@ -92,7 +86,7 @@ if st.session_state.last_app_mode != current_main_app_mode:
     st.session_state.index_built = False
     st.session_state.pdf_bytes = None
     st.session_state.last_app_mode = current_main_app_mode
-    st.rerun() # Rerun to apply state changes immediately
+    st.rerun()
 
 st.session_state.main_app_mode = current_main_app_mode
 
@@ -102,7 +96,6 @@ excel_file = st.sidebar.file_uploader(
     "Upload Bidder Queries (CSV/XLSX)", type=["csv", "xlsx"]
 )
 
-# Variables for controlling UI visibility later
 rfp_size_mode = None
 show_excerpts = False
 viz_option = "None"
@@ -110,7 +103,6 @@ current_vector_store_type = None
 
 
 if st.session_state.main_app_mode == "Historical Analysis":
-    # ─── HISTORICAL ANALYSIS MODE (Azure AI Search) ──────────────────────────
     st.sidebar.subheader("Historical Analysis Settings")
     st.sidebar.info(
         "This mode queries a pre-existing Azure AI Search index. "
@@ -118,25 +110,23 @@ if st.session_state.main_app_mode == "Historical Analysis":
     )
     current_vector_store_type = "Cloud Database (Azure AI Search)"
 
-    # Initialize Azure Search store for Historical Analysis
     if st.session_state.vector_store is None or not isinstance(st.session_state.vector_store, AzureSearch):
         try:
             st.session_state.vector_store = AzureSearch(
                 azure_search_endpoint=AZURE_SEARCH_SERVICE_ENDPOINT,
-                azure_search_key=AZURE_SEARCH_ADMIN_KEY, # Admin key needed for index operations, or query key for just search
+                azure_search_key=AZURE_SEARCH_ADMIN_KEY,
                 index_name=AZURE_SEARCH_INDEX_NAME,
                 embedding_function=embeddings.embed_query,
-                vector_key="contentVector", # Corrected vector field name based on image and previous error
-                # Set semantic_configuration_name during initialization if it's always used for this index
-                semantic_configuration_name="azureml-default" # Set here, not in similarity_search call
+                vector_key="contentVector", # This is crucial for matching your index's vector field name
+                semantic_configuration_name="azureml-default" # This sets the default semantic config for the instance
             )
-            st.session_state.index_built = True # Assume index exists and is ready
+            st.session_state.index_built = True
             st.sidebar.success(f"Connected to cloud database '{AZURE_SEARCH_INDEX_NAME}'.")
         except Exception as e:
             st.sidebar.error(f"Failed to connect to Azure AI Search: {e}. Check Streamlit secrets and index availability.")
             st.session_state.index_built = False
     else:
-        st.session_state.index_built = True # If already connected from a previous run
+        st.session_state.index_built = True
 
     show_excerpts = st.sidebar.checkbox("🔍 Show Azure Search Excerpts", value=False, key="historical_show_excerpts")
     viz_option = st.sidebar.selectbox(
@@ -146,11 +136,9 @@ if st.session_state.main_app_mode == "Historical Analysis":
     )
 
 elif st.session_state.main_app_mode == "Runtime Analysis":
-    # ─── RUNTIME ANALYSIS MODE (FAISS) ───────────────────────────────────────
     st.sidebar.subheader("Runtime Analysis Settings")
     pdf_file_uploader = st.sidebar.file_uploader("Upload Tender PDF", type="pdf", key="runtime_pdf_uploader")
 
-    # Handle PDF upload and state management for Runtime Analysis
     if pdf_file_uploader is not None:
         st.session_state.pdf_bytes = pdf_file_uploader.read()
     else:
@@ -346,11 +334,11 @@ def answer_azure_search(q: str) -> str:
     try:
         # Corrected: Removed redundant semantic_configuration_name from similarity_search call.
         # It's already set during AzureSearch initialization for this instance.
+        # The vector_key is also set during AzureSearch initialization.
         docs = st.session_state.vector_store.similarity_search(
             q,
             k=3,
             search_type="semantic_hybrid"
-            # semantic_configuration_name="azureml-default" # REMOVED: This was causing the "multiple values" error
         )
     except Exception as e:
         # Log the full error to Streamlit's console for debugging
